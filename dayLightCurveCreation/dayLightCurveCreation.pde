@@ -19,6 +19,31 @@
 byte second, rtcMins, oldMins, rtcHrs, oldHrs, dayOfWeek, dayOfMonth, month, year, pMinCounter; 
 byte prevDayOfMonth;
 
+// Month Data for Start, Stop, Photo Period and Fade (based off of actual times, best not to change)
+//Days in each month
+int daysInMonth[12] = {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};  
+
+//Minimum and Maximum sunrise start times in each month
+int minSunriseStart[12] = {296, 321, 340, 357, 372, 389, 398, 389, 361, 327, 297, 285}; 
+int maxSunriseStart[12] = {320, 340, 356, 372, 389, 398, 389, 361, 327, 297, 285, 296}; 
+
+//Minimum and Maximum sunset stop times each month
+int minSunsetFinish[12] = {1126, 1122, 1101, 1068, 1038, 1022, 1025, 1039, 1054, 1068, 1085, 1108}; 
+int maxSunsetFinish[12] = {1122, 1101, 1068, 1038, 1022, 1025, 1039, 1054, 1068, 1085, 1108, 1126}; 
+
+//Minimum and Maximum sunrise or sunset fade duration in each month
+int minFadeDuration[12] = {350, 342, 321, 291, 226, 173, 146, 110, 122, 139, 217, 282}; 
+int maxFadeDuration[12] = {342, 321, 291, 226, 173, 146, 110, 122, 139, 217, 282, 350}; 
+
+// Weather variables
+//int oktas[9] = {255, 239, 223, 207, 191, 175, 159, 143, 128}; // Cloud Values, original range
+int oktas[9] = { 100, 94, 87, 81, 75, 69, 62, 56, 50 };         // Cloud Values in percentage
+// I was going to use a daily random number from 1-100 generated at midnight.
+// So for January 1-15 was clear, so 16-60 was cloudy and 61-100 would be mixed. 
+int clearDays[12] = {15, 12, 20, 23, 28, 37, 43, 48, 51, 41, 29, 23};    // From 0 to clearDays = clear day (oktas 0..1)
+int cloudyDays[12] = {60, 61, 62, 60, 64, 63, 68, 66, 63, 54, 52, 53};   // From clearDays to cloudyDays = cloudy day (oktas 4..8)
+                                                                         // From cloudyDays to 100 = mixed day (oktas 2..3)
+
 // Definition of a light waypoint
 struct _waypoint {
   int time;        // in minutes, 1h = 60min, 24h = 1440min
@@ -44,27 +69,6 @@ int currentSegmentIndex;
 byte bluePins[BLUE_CHANNELS]      =  {9, 10, 11};  // pwm pins for blues
 byte whitePins[WHITE_CHANNELS]    =  {5, 6};       // pwm pins for whites                                                                    
 
-// Month Data for Start, Stop, Photo Period and Fade (based off of actual times, best not to change)
-//Days in each month
-int daysInMonth[12] = {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};  
-
-//Minimum and Maximum sunrise start times in each month
-int minSunriseStart[12] = {296, 321, 340, 357, 372, 389, 398, 389, 361, 327, 297, 285}; 
-int maxSunriseStart[12] = {320, 340, 356, 372, 389, 398, 389, 361, 327, 297, 285, 296}; 
-
-//Minimum and Maximum sunset stop times each month
-int minSunsetFinish[12] = {1126, 1122, 1101, 1068, 1038, 1022, 1025, 1039, 1054, 1068, 1085, 1108}; 
-int maxSunsetFinish[12] = {1122, 1101, 1068, 1038, 1022, 1025, 1039, 1054, 1068, 1085, 1108, 1126}; 
-
-//Minimum and Maximum sunrise or sunset fade duration in each month
-int minFadeDuration[12] = {350, 342, 321, 291, 226, 173, 146, 110, 122, 139, 217, 282}; 
-int maxFadeDuration[12] = {342, 321, 291, 226, 173, 146, 110, 122, 139, 217, 282, 350}; 
-
-// Weather variables
-//int oktas[9] = {255, 239, 223, 207, 191, 175, 159, 143, 128}; // Cloud Values
-int clearDays[12] = {15, 12, 20, 23, 28, 37, 43, 48, 51, 41, 29, 23};
-int cloudyDays[12] = {60, 61, 62, 60, 64, 63, 68, 66, 63, 54, 52, 53}; 
-
 //Cloud shape curve
 #define CLOUD_SHAPE_POINTS 6
 _waypoint cloudShape[CLOUD_SHAPE_POINTS] = {
@@ -79,19 +83,15 @@ _waypoint cloudShape[CLOUD_SHAPE_POINTS] = {
 // Light waypoints
 #define MAX_WAYPOINTS 200
 _waypoint todaysCurve[MAX_WAYPOINTS];  // White light value at waypoint
-byte todaysCurveSize;        // how many waypoints the day will have
+byte todaysCurveSize;                  // how many waypoints the day will have
+boolean todayHasThunderstorm;          // True/False indicator if today has a thunderstorm
+int thunderStormStart;
+int thunderStormFinish;
 
 // Starting time for the day's clouds (maximum of 10 for this test)
 #define MAX_CLOUDS 10
 int todaysClouds[MAX_CLOUDS];
 byte todaysNumOfClouds;
-
-/*
-//I think month is from 1 to 12, so you have to do -1 for the arrays 0-11 elements
-monthly_periods[month-1].start // <- this is the sunrise for the current month
-monthly_periods[month-1].stop // <- this is the sunset for the current month
-monthly_periods[month-1].period // <- this is the period for the current month  
-*/
 
 
 /*****************************************************
@@ -524,6 +524,29 @@ void loop() {
       Serial.print("Level: ");
       Serial.println(whiteLevel);
       updateLeds( (byte) ((float) blueLevel/100.0 * 255.0), (byte) (((float) whiteLevel)/100.0 * 255.0));
+      
+      if (todayHasThunderstorm) {
+        if ((minCounter >= thunderStormStart) && (minCounter >= thunderStormFinish)) {
+      
+          /*
+          // Lightning code posted by Numlock10@ReefCentral
+          // 
+          // http://www.reefcentral.com/forums/showpost.php?p=17542851&postcount=206
+          //
+          
+          if (randNumber <= 25) {  //sets chance of lightning to "Dark" clouds
+            var = 0;
+            while(var < 10){analogWrite(led3Pin, 255);   // set 10 cycles, LED on
+            analogWrite(led3Pin, 0);                     // set the LED off
+            delay(random(0,1000));                       // off random time
+            analogWrite(led3Pin, 255);                   // set the LED on
+            delay(random(0,750));                        // on random time
+            var++;}
+          }
+          */
+        }
+      }
+
   }
   
 }
@@ -581,6 +604,8 @@ void resetVariables( void ) {
   currentSegmentIndex = 0;
 
   pMinCounter = 0;  
+  
+  todayHasThunderstorm = false;
 }
 
 
