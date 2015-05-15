@@ -1,0 +1,1 @@
+Project hosts code used to control LED lighting through Arduino's PWM outputs.  The project author is using an Arduino Duemillenove with RTC and a simple MOSFET + Resistor limited circuit to drive 3W super LEDs.
